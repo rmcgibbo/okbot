@@ -8,8 +8,30 @@ import logging
 HTML_PARSER = HTMLParser.HTMLParser()
 
 class Tweeterator(object):
+    """Iterator over the entries in a user's twitter home timeline.
+
+    This uses the Twython interface to the twitter API to get the most recent
+    tweets from your home screen and feed them out as an iterator.
+
+    Additionally, we use some simple disk-based persistence to store the tweet
+    ids in a file. This way, when you rerun this code, you won't keep getting
+    the same tweets from the top of your feed.
+    """
     def __init__(self, app_key, app_secret, oauth_token, oauth_token_secret,
                  tweet_id_fn):
+        """Create the object
+
+        Parameters
+        ----------
+        app_key : str
+        app_secret : str
+        oauth_token : str
+        oauth_token_secret : str
+            You need to get these to connect to the twitter API
+        tweed_id_fn : str
+            Filename for the flat text file that's going to hold the ids of the
+            tweets that have been dispensed.
+        """
 
         self.t = Twython(app_key=app_key, app_secret=app_secret,
                          oauth_token=oauth_token,
@@ -23,6 +45,19 @@ class Tweeterator(object):
             self.seen_ids = np.loadtxt(self.tweet_id_fn, dtype=int, ndmin=1).tolist()
 
     def pull(self, count=20):
+        """Fetch some tweets
+
+        The iterator will invoke this method automatically if you ask for the
+        next tweet and it doesn't have any available, but for efficiency if you
+        know exactly how many you want, you can 'preload' the buffer by asking
+        for the right amount
+
+        Parameters
+        ----------
+        count : int
+            How many to fetch
+        """
+
         min_id = None
         if len(self.seen_ids) > 0:
             min_id = min(self.seen_ids) - 1
@@ -32,9 +67,17 @@ class Tweeterator(object):
         logging.info('pulled %d tweets', count)
 
     def __iter__(self):
+        """Part of the iterator API"""
         return self
 
     def next(self):
+        """Get the next tweet
+
+        Returns
+        -------
+        text : str
+            The text of the tweet, after being sanitized
+        """
         if len(self.buffer) <= 0:
             self.pull()
 
