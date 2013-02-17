@@ -9,10 +9,8 @@ from lib import okcupid, twitter
 
 logging.basicConfig(level=logging.INFO)
 
-def setup(settings_fn):
+def setup(settings):
     # load up the bots
-    with open(settings_fn) as f:
-        settings = yaml.load(f)
     cupidbot = okcupid.OkCupid(settings['okcupid']['username'],
                       settings['okcupid']['password'])
     twitterstream = twitter.Tweeterator(app_key=settings['twitter']['consumer_key'],
@@ -29,16 +27,20 @@ def setup(settings_fn):
 def responsd_to_messages(cupidbot, twitterstream):
     unreplied_convs = [t for t in cupidbot.get_threads() if t.cls != 'repliedMessage']
     logging.info('number of unreplied messages: %d', len(unreplied_convs))
-    stream.pull(len(unreplied_convs))
+    twitterstream.pull(len(unreplied_convs))
     for thread in unreplied_convs:
-        cupidbot.reply_to_thread(thread.threadid, twitterstream.next(), dry_run=False)
+        cupidbot.reply_to_thread(thread.threadid, twitterstream.next(),
+                                 dry_run=False)
         time.sleep(3)
         
 def main():
-    cupidbot, twitterstream = setup('settings.yml')
-    
+    with open('settings.yml') as f:
+        settings = yaml.load(f)
+        
+    cupidbot, twitterstream = setup(settings)
     while True:
         responsd_to_messages(cupidbot, twitterstream)
+        cupidbot._browser.get('http://www.google.com')
 
         # random number close to 60 (seconds)
         r = 60 * (1 + 0.2*np.random.randn())
