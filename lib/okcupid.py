@@ -3,9 +3,13 @@ import re
 import yaml
 import logging
 import random
+from collections import namedtuple
 
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
+
+Message = namedtuple('Message', ['cls', 'text', 'threadid', 'user'])
+
 
 def sleep(seconds='random'):
     if seconds is 'random':
@@ -18,9 +22,9 @@ def uniqueify(seq, key):
     keys = set([])
     nodups = []
     for elem in seq:
-        if elem[key] not in keys:
+        if getattr(elem, key) not in keys:
             nodups.append(elem) 
-        keys.add(elem[key])
+        keys.add(getattr(elem, key))
     return nodups
 
 
@@ -92,18 +96,15 @@ class OkCupid(object):
                 logging.error('error parsing threadid %s', thread)
                 raise
             
-            messages.append({
-                'class': thread.get_attribute('class'),
-                'text': thread.text,
-                'threadid': threadid,
-                'user': user,
-            })
+            m = Message(cls=thread.get_attribute('class'),
+                        text=thread.text, threadid=threadid, user=user)
+            messages.append(m)
 
         if unique_by_user:
             messages = uniqueify(messages, 'user')
         return messages
 
-    def reply_to_thread(self, threadid, content):
+    def reply_to_thread(self, threadid, content, dry_run=False):
         """Reply to a thread
 
         Parameters
@@ -126,7 +127,9 @@ class OkCupid(object):
         message_box.send_keys(content)
 
         send_button = self._browser.find_element_by_xpath('//*[@id="send_button"]/a')
-        send_button.click()
+        
+        if not dry_run: 
+            send_button.click()
 
 
 
