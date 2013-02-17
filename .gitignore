@@ -1,0 +1,5 @@
+# these are private
+settings.yml
+tweet_ids.dat
+
+*.pyc
