@@ -7,7 +7,7 @@ from sqlalchemy.ext.declarative import declarative_base
 class Thread(Base):
     __tablename__ = 'threads'
     id = Column(Integer, primary_key=True)
-    okc_id = Column(String)
+    okc_id = Column(String, unique=True)
     
     def __repr__(self):
         return u'Thread %d, N=%d msgs>' % (self.id, len(self.messages))
@@ -18,7 +18,7 @@ class Message(Base):
     thread_id = Column(Integer, ForeignKey('threads.id'))
     thread = relationship("Thread", backref=backref('messages', order_by=id))
 
-    okc_id = Column(String)
+    okc_id = Column(String, unique=True)
     body = Column(String)
     sender = Column(String)
     fancydate = Column(String)

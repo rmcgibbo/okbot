@@ -27,6 +27,6 @@ if __name__ == '__main__':
             globals()[sys.argv[1]]()
         else:
             print_usage()
-    except KeyError, IndexError:
+    except IndexError:
         print_usage()
                 
