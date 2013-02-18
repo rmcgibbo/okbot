@@ -10,7 +10,7 @@ class Thread(Base):
     okc_id = Column(String)
     
     def __repr__(self):
-        return '<Thread %d, N=%d msgs>' % (self.id, len(self.messages))
+        return u'Thread %d, N=%d msgs>' % (self.id, len(self.messages))
 
 class Message(Base):
     __tablename__ = 'messages'
@@ -24,4 +24,11 @@ class Message(Base):
     fancydate = Column(String)
 
     def __repr__(self):
-        return '%s:  %s' % (self.sender, self.body)
+        use_unicode = False
+        if use_unicode:
+            '%s:  %s' % (self.sender, self.body)
+
+        return ('%s:  %s' % (self.sender, self.body)).encode('utf-8')
+        
+    #def __str__(self):
+    #    return self.__repr__().

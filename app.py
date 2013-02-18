@@ -12,20 +12,21 @@ from lib import okcupid, twitter, models
 from lib.settings import Settings
 from lib.database import db, get_or_create, init_db
 init_db()
+SETTINGS = Settings('settings.yml')
 
 logging.basicConfig(level=logging.INFO)
 
-def setup(settings):
+def setup():
     """Load up an OkCupid object and a Tweeterator object, pulling startup info
     from the settings dict.
     """
-    cupidbot = okcupid.OkCupid(settings.okcupid['username'],
-                      settings.okcupid['password'])
-    twitterstream = twitter.Tweeterator(app_key=settings.twitter['consumer_key'],
-                                 app_secret=settings.twitter['consumer_secret'],
-                                 oauth_token=settings.twitter['access_key'],
-                                 oauth_token_secret=settings.twitter['access_secret'],
-                                 tweet_id_fn=settings.tweet_id_fn)
+    cupidbot = okcupid.OkCupid(SETTINGS.okcupid['username'],
+                      SETTINGS.okcupid['password'])
+    twitterstream = twitter.Tweeterator(app_key=SETTINGS.twitter['consumer_key'],
+                                 app_secret=SETTINGS.twitter['consumer_secret'],
+                                 oauth_token=SETTINGS.twitter['access_key'],
+                                 oauth_token_secret=SETTINGS.twitter['access_secret'],
+                                 tweet_id_fn=SETTINGS.tweet_id_fn)
     return cupidbot, twitterstream
 
 
@@ -44,27 +45,32 @@ def respond_to_messages(cupidbot, twitterstream):
         its buffer
     """
 
-    unreplied_convs = [t for t in cupidbot.get_threads() if t.cls != 'repliedMessage']
-    logging.info('number of unreplied messages: %d', len(unreplied_convs))
-    twitterstream.pull(len(unreplied_convs))
-    for thread in unreplied_convs:
-        cupidbot.reply_to_thread(thread.threadid, twitterstream.next(),
+    threads = cupidbot.get_threads(['unreadMessage', 'readMessage'])
+    logging.info('Replying to %s', threads)
+    
+    logging.info('number of unreplied messages: %d', len(threads))
+    twitterstream.pull(len(threads))
+    for tid in threads:
+        cupidbot.reply_to_thread(tid, twitterstream.next(),
                                  dry_run=False)
-        time.sleep(3)
+        log_threads(cupidbot, [tid])
+        okcupid.sleep()
 
 
 def log_threads(cupidbot, thread_ids=None):
     """Open each thread and save it to the local database
     """
     if thread_ids is None:
-        thread_ids = [t.threadid for t in cupidbot.get_threads()]
-    logging.info('Thread ids: %s', thread_ids)
+        thread_ids = cupidbot.get_threads()
+
+    logging.info('Logging thread ids: %s', thread_ids)
     
     for tid in thread_ids:
+        logging.info('Logging thread %s', tid)
         thread = get_or_create(db, models.Thread, okc_id=tid)
         db.add(thread)
         db.flush()
-
+        
         msgs = cupidbot.scrape_thread(tid)
         for msg in msgs:
             params = {'okc_id': msg['id'], 'thread_id': thread.id,
@@ -73,32 +79,25 @@ def log_threads(cupidbot, thread_ids=None):
             message = get_or_create(db, models.Message, **params)
             logging.info(params)
             db.add(message)
-
-        okcupid.sleep(2)
-        
-    db.commit()
+    
+        db.commit()
+        logging.info('committed thread')
     
 
 def main():
-    settings = Settings('settings.yml')
-
-    cupidbot, twitterstream = setup(settings)
+    cupidbot, twitterstream = setup()
     cupidbot.login()
+    
+    #log_threads(cupidbot)
+    
     while True:
         respond_to_messages(cupidbot, twitterstream)
-        log_threads(cupidbot)
         cupidbot._browser.get('http://www.google.com')
 
         # random number close to 60 (seconds)
         r = 60 * (1 + 0.2*np.random.randn())
-        okcupid.sleep(settings.sleep_time_minutes * r)
+        okcupid.sleep(SETTINGS.sleep_time_minutes * r)
 
 
 if __name__ == '__main__':
     main()
-    
-    # settings = Settings('settings.yml')
-    # cupidbot, twitterstream = setup(settings)
-    # cupidbot.login()
-    # 
-    # #log_threads(cupidbot, ['9237024360565370596'])

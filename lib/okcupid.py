@@ -4,12 +4,11 @@ import yaml
 import logging
 import random
 from collections import namedtuple
+from lxml.html import soupparser
 
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
-
-Message = namedtuple('Message', ['cls', 'text', 'threadid', 'user'])
-
+BASE_URL = 'https://www.okcupid.com%s'
 
 def sleep(seconds='random'):
     "Sleep a few seconds"
@@ -52,19 +51,68 @@ class OkCupid(object):
         self._browser = webdriver.Firefox()
         self._logged_in = False
 
+        self._root_soup_element_url = None
+        self._root_soup_element = None
+
     def __del__(self):
         self._browser.close()
+
+    def navigate_to(self, url, force_refresh=False):
+        "Move the browser to a new url"
+        
+        if not (url.startswith('http://') or url.startswith('https://')):
+            url = BASE_URL % url
+        
+        logging.info('Nativating to: %s', url)
+        if (self._browser.current_url != url) or force_refresh:
+            self._browser.get(url)
+        sleep()
+
+    def xpath(self, selector, force_rebuild=False):
+        """Run the LXML/BeautifulSoup xpath engine
+        
+        Parameters
+        ----------
+        selector : str
+            An xpath selector, executed on the whole document
+        force_rebuild : bool, optional
+            Should we necessarily rebuild the element tree?
+
+        Returns
+        -------
+        elem : [lxml.Element]
+        """
+        if force_rebuild or (self._root_soup_element_url != self._browser.current_url):
+            self._root_soup_element = soupparser.fromstring(self._browser.page_source)
+
+        return self._root_soup_element.xpath(selector)
+
+    def xpath0(self, selector, force_rebuild=False):
+        """Get a single element with xpath
+        
+        Returns
+        -------
+        elem : lxml.Element, or None
+        
+        """
+        e = self.xpath(selector, force_rebuild)
+        if len(e) > 0:
+            return e[0]
+        return None
+
 
     def login(self):
         """Log into the OKCupid site
         """
 
         logging.info('"%s" logging into OkCupid', self.username)
-        self._browser.get('https://www.okcupid.com/login')
+        self.navigate_to('/login')
         elem = self._browser.find_element_by_xpath('//*[@id="user"]')
         elem.send_keys(self.username)
         elem = self._browser.find_element_by_xpath('//*[@id="pass"]')
-        elem.send_keys(self.password + Keys.RETURN)
+        elem.send_keys(self.password)
+        elem = self._browser.find_element_by_xpath('//*[@id="login_form"]/p/a')
+        elem.click()
 
         while not 'Welcome' in self._browser.title:
             logging.info('Waiting on load...')
@@ -74,60 +122,63 @@ class OkCupid(object):
 
         self._logged_in = True
 
-    def get_threads(self, unique_by_user=True):
+    def get_threads(self, classes=None):
         """Get a summary of all of the current message threads from the main
         messages page.
 
+        Parameters
+        ----------
+        cls : list of classes or a single class
+
         Return
         ------
-        threads : list of dicts
-            Each dict represents a current thread. It contains three keys, 'class',
-            'text', and 'threadid'. Text is the last message in the thread -- the
-            one displayed on http://www.okcupid.com/messages
+        thread_ids : list of strings
+            List of thread_id for each thread
         """
+        logging.info('Getting all threads')
+        
         if not self._logged_in:
             raise LoginError('Not Logged In')
+        self.navigate_to('/messages')
+        
+        if isinstance(classes, basestring):
+            classes = [classes]
+        
+        def thread_ids_on_page():
+            if classes is None:
+                threads = self.xpath('//*[@id="messages"]/li//p/@onclick')
+                
+            threads = []
+            for cls in classes:
+                xstring = '//*[@id="messages"]/li[@class="%s"]//p/@onclick' % cls
+                threads += self.xpath(xstring)
 
-        self._browser.get('http://www.okcupid.com/messages')
-        sleep()
+            return [re.search('\d+', e).group(0) for e in threads]
+        
+        
+        all_ids = thread_ids_on_page()
+        
+        
+        # need to deal with the pagination
+        while True:
+            # look for a next button
+            next = self.xpath0('//li[@class="next"]/a')
+            if next is None:
+                break
+            else:
+                logging.info('Going to Next')
+                self.navigate_to(next.attrib['href'])
+                all_ids += thread_ids_on_page()
 
-        messages = []
-        # get all of the conversations
-        threads = self._browser.find_elements_by_xpath('//*[@id="messages"]/li')
+        return all_ids
 
 
-        for thread in threads:
-            # classes are 'unreadMessage', 'readMessage', 'repliedMessage'
-            # filteredReadMessage
-
-            try:
-                match = re.search('/profile/(.*)',
-                    thread.find_element_by_tag_name('a').get_attribute('href'))
-                user = match.group(1)
-            except Exception:
-                logging.error('error parsing username %s', thread)
-                user = 0
-
-            try:
-                threadid = re.search('\d+', thread.get_attribute('id')).group(0)
-            except:
-                logging.error('error parsing threadid %s', thread)
-                raise
-
-            m = Message(cls=thread.get_attribute('class'),
-                        text=thread.text, threadid=threadid, user=user)
-            messages.append(m)
-
-        if unique_by_user:
-            messages = uniqueify(messages, 'user')
-        return messages
-
-    def reply_to_thread(self, threadid, content, dry_run=False):
+    def reply_to_thread(self, thread_id, content, dry_run=False):
         """Reply to a message thread
 
         Parameters
         ----------
-        threadid : int
+        thread_id : str
             The id of the thread to reply to. This is returned as part of the dict
             in get_threads()
         content : str
@@ -137,9 +188,8 @@ class OkCupid(object):
             raise LoginError('Not Logged In')
 
         thread_url = 'http://www.okcupid.com/messages' + \
-            '?readmsg=true&threadid=%s&folder=1' % threadid
-        self._browser.get(thread_url)
-        sleep(2)
+            '?readmsg=true&threadid=%s&folder=1' % thread_id
+        self.navigate_to(thread_url)
 
         message_box = self._browser.find_element_by_xpath('//*[@id="message_text"]')
         message_box.send_keys(content)
@@ -149,14 +199,14 @@ class OkCupid(object):
         if not dry_run:
             send_button.click()
 
-    def scrape_thread(self, threadid):
+    def scrape_thread(self, thread_id):
         """Scrape all of the messages in a conversation thread
-        
+
         Parameters
         ----------
         threadid : int
             The id of the thread to scrape
-        
+
         Returns
         -------
         messages : list
@@ -164,16 +214,11 @@ class OkCupid(object):
             'id', 'sender', 'body', 'time'
         """
         thread_url = 'http://www.okcupid.com/messages' + \
-            '?readmsg=true&threadid=%s&folder=1' % threadid
-        self._browser.get(thread_url)
-        sleep(2)
-        
-        collapse_btn = self._browser.find_element_by_xpath('//li[@id="collapse"]')
-        if collapse_btn:
-            collapse_btn.click()
-        
+            '?readmsg=true&threadid=%s&folder=1' % thread_id
+        self.navigate_to(thread_url)
+
         def parse_msg(elem):
-            id = elem.get_attribute('id')
+            id = elem.attrib['id']
 
             # there are some elements in the thread list that actually aren't
             # messages, so we'll filter those out
@@ -181,20 +226,27 @@ class OkCupid(object):
                 return None
             id = id.replace('message_', '')
 
-            xpath = elem.find_element_by_xpath  # cache the method name
-            body = xpath('.//div[@class="message_body"]').get_attribute('innerHTML')
-            sender = xpath('./a[@class="photo"]').get_attribute('title')
-            fancydate = xpath('.//span[@class="fancydate"]').get_attribute('innerHTML')
-            
-            body = body.replace('<em class="mobilemsg">Sent from the OkCupid app</em>', '')
-            body = body.strip()
-            
+            body = elem.xpath('.//div[@class="message_body"]')[0].text_content()
+            # get the last bit of the href in the photo on this post
+            sender = elem.xpath('./a[@class="photo"]')[0].attrib['href'].rsplit('/')[-1]
+
+            try:
+                fancydate = elem.xpath('.//span[@class="fancydate"]')[0].text_content()
+            except:
+                # this doesn't work when it's the last message and the date sent
+                # is "just now"
+                fancydate = None
+
+
+            body = body.replace('Sent from the OkCupid app', '')
+            body.strip()
+
             return {'id': id, 'sender': sender, 'body': body, 'fancydate': fancydate}
-        
-        thread_items = self._browser.find_elements_by_xpath('//ul[@id="thread"]/li')
+
+        message_items = self.xpath('//ul[@id="thread"]/li')
         # run parse_msg on each entry, but remove the None entries
-        return [e for e in [parse_msg(e) for e in thread_items] if e is not None]
-        
+        return [e for e in [parse_msg(e) for e in message_items] if e is not None]
+
 
 def test1():
     with open('settings.yml') as f:
