@@ -1,5 +1,6 @@
 # these are private
 settings.yml
 tweet_ids.dat
+database.sqlite
 
 *.pyc
