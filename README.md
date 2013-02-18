@@ -27,6 +27,3 @@ programmatically.
 
 Twitter has a great API. Here, we're using the [Twython bindings](https://github.com/ryanmcgrath/twython),
 which as you might guess are written in python.
-
-Unfortunately, there aren't any python bindings for the new tumblr API. There
-are, however, ruby bindings, so we'll do that portion of the code in ruby.
