@@ -45,10 +45,17 @@ class OkCupid(object):
     don't actually have an API. Currently, it has only minimal functionality.
     """
 
-    def __init__(self, username, password):
+    def __init__(self, username, password, browser='chrome'):
+
+        browser_switch = {'chrome': webdriver.Chrome,
+                        'firefox': webdriver.Firefox}
+        try:
+            self._browser = browser_switch[browser]()
+        except KeyError:
+            raise KeyError('Browser must be one of %s' % browser_switch.keys())
+        
         self.username = username
         self.password = password
-        self._browser = webdriver.Firefox()
         self._logged_in = False
 
         self._root_soup_element_url = None

@@ -1,11 +1,79 @@
+##############################################################################
+# Imports
+##############################################################################
+
+from __future__ import division
 import os
 import yaml
 import numpy as np
+import logging
+
+import HTMLParser
 from twython import Twython  # twitter api
 from ttp import ttp  # twitter text parsing, $ pip install twitter-text-python
-import HTMLParser
-import logging
+
+##############################################################################
+# Globals
+##############################################################################
+
 HTML_PARSER = HTMLParser.HTMLParser()
+__all__ = ['Tweeterator', 'SortedTweeterator']
+
+##############################################################################
+# Functions
+##############################################################################
+
+
+def levenshtein(a,b):
+    """Calculates the Levenshtein distance between a and b.
+
+    http://hetland.org/coding/python/levenshtein.py
+    """
+    n, m = len(a), len(b)
+    if n > m:
+        # Make sure n <= m, to use O(min(n,m)) space
+        a,b = b,a
+        n,m = m,n
+
+    current = range(n+1)
+    for i in range(1,m+1):
+        previous, current = current, [i]+[0]*n
+        for j in range(1,n+1):
+            add, delete = previous[j]+1, current[j-1]+1
+            change = previous[j-1]
+            if a[j-1] != b[i-1]:
+                change = change + 1
+            current[j] = min(add, delete, change)
+
+    return current[n]
+
+
+def sanitize(text):
+    """Remove links, hashtags and usernames from the tweet, and
+    unescape HTML
+
+    Parameters
+    ----------
+    text : str
+        An input string, containing a raw tweet
+
+    Returns
+    -------
+    text : str
+        A santized version of the input, with stuff removed
+    """
+
+    text = ttp.URL_REGEX.sub('', text)
+    text = ttp.HASHTAG_REGEX.sub('', text)
+    text = ttp.USERNAME_REGEX.sub('', text)
+    text = HTML_PARSER.unescape(text)
+    return text
+
+
+##############################################################################
+# Classes
+##############################################################################
+
 
 class Tweeterator(object):
     """Iterator over the entries in a user's twitter home timeline.
@@ -29,8 +97,8 @@ class Tweeterator(object):
         oauth_token_secret : str
             You need to get these to connect to the twitter API
         tweed_id_fn : str
-            Filename for the flat text file that's going to hold the ids of the
-            tweets that have been dispensed.
+            Filename for the flat text file that's going to hold the ids of
+            the tweets that have been dispensed.
         """
 
         self.t = Twython(app_key=app_key, app_secret=app_secret,
@@ -62,8 +130,13 @@ class Tweeterator(object):
         if len(self.seen_ids) > 0:
             min_id = min(self.seen_ids) - 1
 
-        self.buffer = self.t.getHomeTimeline(count=count, include_rts=False,
-                                             max_id=min_id)
+        buf = self.t.getHomeTimeline(count=count, include_rts=False, max_id=min_id)
+        if len(buf) == 0:
+            raise RuntimeError('Zero tweets sucessfully pulled from twitter API. :(')
+        
+        # add new tweets to old buffer
+        self.buffer.extend([{'id': b['id'], 'text': sanitize(b['text'])} for b in buf])
+
         logging.info('pulled %d tweets', count)
 
     def __iter__(self):
@@ -85,42 +158,51 @@ class Tweeterator(object):
         self.seen_ids.append(tweet['id'])
         with open(self.tweet_id_fn, 'a') as f:
             print >> f, tweet['id']
-        return self._sanitize(tweet['text'])
+        return tweet['text']
 
-    def _sanitize(self, text):
-        """Remove links, hashtags and usernames from the tweet, and
-        unescape HTML
 
-        Parameters
-        ----------
-        text : str
-            An input string, containing a raw tweet
+class SortedTweeterator(Tweeterator):
+    ideal_buffer_len = 100
+    large_number = 1e10
+    
+    def next(self, target=None):
+        if target is None:
+            return super(SortedTweeterator, self).next()
+        
+        if len(self.buffer) <= self.ideal_buffer_len / 2:
+            self.pull(self.ideal_buffer_len)
+        
+        lower_target = target.lower()
+        def normalized_distance(tweet):
+            text = tweet['text']
+            if len(text) == 0:
+                return self.large_number
+            dist = levenshtein(text.lower(), lower_target) / len(text)
+            return dist
+        
+        # sort by distance to target
+        self.buffer.sort(key=normalized_distance)
+        # print [b['text'] for b in self.buffer]
+        return super(SortedTweeterator, self).next()
+            
 
-        Returns
-        -------
-        text : str
-            A santized version of the input, with stuff removed
-        """
-
-        text = ttp.URL_REGEX.sub('', text)
-        text = ttp.HASHTAG_REGEX.sub('', text)
-        text = ttp.USERNAME_REGEX.sub('', text)
-        text = HTML_PARSER.unescape(text)
-        return text
+##############################################################################
+# Tests
+##############################################################################
 
 
 if __name__ == '__main__':
     with open('settings.yml') as f:
         settings = yaml.load(f)
 
-    t = Tweeterator(app_key=settings['twitter']['consumer_key'],
+    t = SortedTweeterator(app_key=settings['twitter']['consumer_key'],
                     app_secret=settings['twitter']['consumer_secret'],
                     oauth_token=settings['twitter']['access_key'],
                     oauth_token_secret=settings['twitter']['access_secret'],
                     tweet_id_fn=settings['tweet_id_fn'])
 
-    for i in range(4):
-        print t.next() + u'\n'
-
-#oauth_token = auth_props['oauth_token']
-#oauth_token_secret = auth_props['oauth_token_secret']
+    prompts = ['What was your name', 'Want to fuck', 'What is your name', 'DTF?']
+    for i in range(10):
+        a = t.next(prompts[i])
+        print 'Q:"%s". A:"%s"' % (prompts[i], a)
+        prompts.append(a)
